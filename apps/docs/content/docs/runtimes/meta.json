@@ -5,6 +5,7 @@
     "ai-sdk",
     "langgraph",
     "langserve",
+    "mastra",
     "external-store",
     "custom-rest",
     "..."

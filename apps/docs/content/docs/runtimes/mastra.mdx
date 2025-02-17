@@ -1,0 +1,203 @@
+---
+title: "Mastra"
+---
+
+## Overview
+
+Mastra is a TypeScript AI framework that integrates seamlessly with assistant-ui to help you build AI applications. It provides essential primitives including agents, tools, workflows, and RAG capabilities.
+
+## Requirements
+
+- A running Mastra server (local dev server or Mastra Cloud)
+- Node.js 18+
+- Next.js 13+ (for app router)
+
+## Getting Started
+
+import { Steps, Step } from "fumadocs-ui/components/steps";
+
+<Steps>
+  <Step>
+  ### Create a Next.JS project
+
+```sh
+npx create-next-app@latest my-app
+cd my-app
+```
+
+  </Step>
+
+  <Step>
+  ### Install Dependencies
+
+```sh npm2yarn
+npm install @assistant-ui/react @mastra/client-js
+```
+
+  </Step>
+
+  <Step>
+  ### Create a MastraRuntimeProvider component
+
+```tsx title="@/app/MastraRuntimeProvider.tsx"
+"use client";
+
+import {
+  useExternalStoreRuntime,
+  ThreadMessageLike,
+  AppendMessage,
+  AssistantRuntimeProvider,
+} from "@assistant-ui/react";
+import { MastraClient } from "@mastra/client-js";
+import { useState, ReactNode } from "react";
+
+const mastra = new MastraClient({
+  baseUrl: process.env.NEXT_PUBLIC_MASTRA_API_URL || "http://localhost:4111",
+});
+
+const convertMessage = (message: ThreadMessageLike): ThreadMessageLike => {
+  return message;
+};
+
+export function MastraRuntimeProvider({
+  children,
+}: Readonly<{
+  children: ReactNode;
+}>) {
+  const [isRunning, setIsRunning] = useState(false);
+  const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
+
+  const onNew = async (message: AppendMessage) => {
+    if (message.content[0]?.type !== "text")
+      throw new Error("Only text messages are supported");
+
+    const input = message.content[0].text;
+    setMessages((currentConversation) => [
+      ...currentConversation,
+      { role: "user", content: input },
+    ]);
+    setIsRunning(true);
+
+    try {
+      const agent = mastra.getAgent("myAgent");
+      const response = await agent.stream({
+        messages: [
+          {
+            role: "user",
+            content: input,
+          },
+        ],
+      });
+
+      const reader = response.getReader();
+      const decoder = new TextDecoder();
+
+      let buffer = "";
+      let assistantMessage = "";
+      let assistantMessageAdded = false;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          buffer += chunk;
+
+          const matches = buffer.matchAll(/0:"([^"]*)"/g);
+          for (const match of matches) {
+            const content = match[1];
+            assistantMessage += content;
+            setMessages((currentConversation) => {
+              const message: ThreadMessageLike = {
+                role: "assistant",
+                content: [{ type: "text", text: assistantMessage }],
+              };
+
+              if (!assistantMessageAdded) {
+                assistantMessageAdded = true;
+                return [...currentConversation, message];
+              }
+              return [...currentConversation.slice(0, -1), message];
+            });
+          }
+          buffer = "";
+        }
+      } finally {
+        reader.releaseLock();
+        setIsRunning(false);
+      }
+    } catch (error) {
+      console.error("Error in onNew:", error);
+      setIsRunning(false);
+    }
+  };
+
+  const runtime = useExternalStoreRuntime({
+    isRunning,
+    messages,
+    convertMessage,
+    onNew,
+  });
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      {children}
+    </AssistantRuntimeProvider>
+  );
+}
+```
+
+  </Step>
+
+  <Step>
+  ### Add Environment Variables
+
+Create a `.env.local` file:
+
+```sh title=".env.local"
+NEXT_PUBLIC_MASTRA_API_URL=http://localhost:4111
+```
+
+  </Step>
+
+  <Step>
+  ### Wrap your app in MastraRuntimeProvider
+
+```tsx title="@/app/layout.tsx"
+import { MastraRuntimeProvider } from "./MastraRuntimeProvider";
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <MastraRuntimeProvider>
+      <html lang="en">
+        <body>{children}</body>
+      </html>
+    </MastraRuntimeProvider>
+  );
+}
+```
+
+  </Step>
+
+  <Step>
+  ### Add the Thread component to your page
+
+```tsx title="@/app/page.tsx"
+import { Thread } from "@/components/assistant-ui/thread";
+
+export default function Home() {
+  return (
+    <div className="h-full">
+      <Thread />
+    </div>
+  );
+}
+```
+
+  </Step>
+</Steps>
